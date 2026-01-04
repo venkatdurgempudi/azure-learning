@@ -264,16 +264,3 @@ Validation checklist (after successful run)
 - Add automated tests and a small GitHub Actions workflow to validate pipeline JSON and check notebook syntax.
 
 ---
-
-## 15 — Should I update repo files for you?
-I can:
-- Replace `<STORAGE>` placeholders in the files with your actual storage account name and push updates.
-- Add a small Python script to generate synthetic registrations and load them into your local SQL Server.
-- Expand the repo README in the repository directly (I can commit the updated README if you want).
-
-If you want me to update and commit the README and/or replace placeholders, reply with:
-1. Your Azure storage account name (exact)
-2. Whether you use Azure Databricks or Databricks Community
-3. Where you want run metadata stored: Azure SQL or Delta/parquet
-
-I'll then commit the updated README or fill the placeholders and push the changes for you.
