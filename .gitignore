@@ -1,0 +1,9 @@
+# Ignore secrets and local settings
+secrets/**
+!secrets/README.md
+*.env
+*.pem
+*.pfx
+.vscode/
+__pycache__/
+.DS_Store
