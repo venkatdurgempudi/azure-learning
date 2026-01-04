@@ -1,266 +1,315 @@
-# Azure Data Engineering — Registrations Pipeline (starter)
+# Azure Data Engineering — Registrations Pipeline (CSV + Databricks Community Edition)
 
-This repository contains starter artifacts to build a small end‑to‑end Azure data engineering pipeline for a Registrations dashboard. It is designed to run from your laptop (local SQL Server Developer Edition) and a low‑cost Azure subscription.
+This repository contains a **detailed, end-to-end Azure data engineering demo project** that processes **CSV-based registration data** using **Azure Data Factory**, **Azure Data Lake Storage Gen2**, and **Databricks Community Edition**.
 
-Contents (what I added)
-- azure/create_resources.sh — CLI script to create Resource Group + ADLS Gen2 storage account + containers
-- azure/create_sp_and_role.sh — CLI script to create a Service Principal (Storage Blob Data Contributor)
-- sql/sample_ddl.sql — local SQL Server DDL: masters, `patient_registrations`, control table
-- sql/usp_insert_run_record.sql — optional stored procedure to upsert run metadata into Azure SQL
-- data/sample_registrations.csv — small sample CSV
-- adf/pipeline_registrations.json — ADF pipeline template (incremental 7‑day extract → Databricks → archive → metadata)
-- notebooks/ingest_and_merge_registrations.py — Databricks PySpark notebook for dedupe/enrich/merge into Delta
+The project is intentionally designed to be:
 
-This README below contains exact step‑by‑step instructions tailored to your environment (Windows 10, SQL Server Developer) so you can run the project with minimal Azure spend.
+* ✅ **Low-cost / free-tier friendly**
+* ✅ **Runnable by an individual learner**
+* ✅ **Interview-ready**, showing real-world Azure data engineering patterns
+
+This is **not a toy example** — it mirrors how file-based ingestion pipelines are commonly built in production.
 
 ---
 
-## Quick architecture (one line)
-On‑prem (local SQL Server) → ADF (Self‑Hosted IR) copies 7‑day window → ADLS Gen2 incoming → Databricks notebook dedupe/enrich → Delta in processed container → archive + run metadata.
+## 1. High-level architecture
+
+**One-line flow**
+
+CSV files → ADLS Gen2 (incoming) → Azure Data Factory (orchestration & archive) → Databricks Community (transform & merge) → ADLS Gen2 (processed Delta)
+
+**Key design principle**
+
+* Data **lands in storage first**
+* Azure Data Factory manages **file movement & orchestration**
+* Databricks handles **business logic and transformations only**
 
 ---
 
-## Prerequisites (local & Azure)
-Local (on your laptop)
-- Microsoft SQL Server 2022 Developer (you already have)
-- SQL client: SQL Server Management Studio (SSMS) or Azure Data Studio
-- Git (optional) + text editor (VS Code)
-- PowerShell / Git Bash / WSL (for Azure CLI scripts)
-- Python (optional, for generating mock data)
+## 2. What this project demonstrates
 
-Azure
-- Azure subscription (free trial if eligible)
-- Azure CLI installed and logged in: `az login`
-- (Recommended) GitHub account for repo (you already have)
+This project demonstrates core Azure data engineering skills:
 
-Optional but recommended
-- Azure Storage Explorer (visual for ADLS)
-- Databricks Community (free) OR Azure Databricks (real integration)
+* File-based ingestion (CSV)
+* Azure Data Lake Storage Gen2 layout design
+* Azure Data Factory pipelines and orchestration
+* Medallion architecture (Raw → Staging → Curated)
+* Incremental + idempotent processing
+* Delta Lake MERGE for deduplication
+* Cost-aware architectural decisions
+* Clear separation of concerns
 
 ---
 
-## 1 — Prepare local SQL Server (mock data)
-1. Open SSMS or Azure Data Studio and run the DDL in `sql/sample_ddl.sql` to create `mock_his` db, masters, `patient_registrations`, and `pipeline_runs`.
-   - In SSMS: File → New → Query → paste file contents → Execute.
-2. Load sample data:
-   - Option A (quick manual): In SSMS use Import Data wizard to import `data/sample_registrations.csv` into `mock_his.dbo.patient_registrations`.
-   - Option B (T-SQL BULK INSERT, ensure file accessible to SQL Server service):
-     ```sql
-     BULK INSERT mock_his.dbo.patient_registrations
-     FROM 'C:\path\to\data\sample_registrations.csv'
-     WITH (
-       FIRSTROW = 2,
-       FIELDTERMINATOR = ',',
-       ROWTERMINATOR = '\n',
-       FORMAT = 'CSV'
-     );
-     ```
-   - Option C: Use INSERT statements for a few rows.
+## 3. Repository structure
 
-Confirm that rows exist:
-```sql
-USE mock_his;
-SELECT TOP 10 * FROM dbo.patient_registrations ORDER BY modified_at DESC;
+```
+.
+├── LICENSE
+├── README.md                 # Main project documentation
+├── adf/
+│   └── pipeline_registrations.json   # Azure Data Factory pipeline (CSV orchestration)
+├── azure/
+│   ├── create_resources.sh           # Creates RG + ADLS Gen2 + containers
+│   └── create_sp_and_role.sh         # Creates Service Principal for ADLS access
+├── data/
+│   ├── registrations.csv             # Sample registration fact data (CSV source)
+│   ├── gender_master.csv             # Reference / master data
+│   └── unit_master.csv               # Reference / master data
+├── notebooks/
+│   └── ingest_and_merge_registrations.py  # Databricks PySpark notebook (Delta MERGE)
+├── sql/
+│   ├── sample_ddl.sql                # Optional SQL schema (control / demo use)
+│   └── usp_insert_run_record.sql     # Optional run-metadata stored procedure
+├── tools/
+│   ├── gen-tree.sh                   # Utility to print repo tree
+│   └── generate_mock_registrations.py# Generates synthetic CSV registration data
+├── secrets/
+│   └── README.md                     # Guidance for handling secrets (no secrets committed)
+├── learning/
+│   ├── README.md                     # Learning notes & walkthroughs
+│   └── resources.md                  # Reference links & study material
 ```
 
 ---
 
-## 2 — Create minimal Azure resources (low cost)
-You can run the convenience scripts in `azure/` or create resources via Portal.
+## 4. Prerequisites
 
-A. Install Azure CLI (if not already):
-- Windows: follow https://learn.microsoft.com/cli/azure/install-azure-cli-windows
-- Login: `az login`
+### Local
 
-B. Run create resources script (use Git Bash, WSL, or PowerShell with Bash support)
-- Make script executable (in Bash): `chmod +x azure/create_resources.sh`
-- Run example:
-  ```bash
-  ./azure/create_resources.sh my-rg eastus mystorageacct123
-  ```
-  Replace:
-  - `my-rg` with your resource group name
-  - `eastus` with preferred region
-  - `mystorageacct123` with a globally unique storage account name (lowercase)
+* Git (optional)
+* VS Code or any text editor
+* Azure CLI (`az login` completed)
 
-What the script creates:
-- Resource group `my-rg`
-- Storage account `mystorageacct123` with hierarchical namespace (ADLS Gen2)
-- Containers: `incoming`, `processed`, `archive`, `control`
+### Azure
 
-If you prefer Portal:
-- Create Resource Group → Storage Account (General purpose v2) → Enable Hierarchical namespace → Create containers in Storage Explorer.
+* Azure subscription (Free Trial is fine)
+* Azure Storage Account (ADLS Gen2 enabled)
+* Azure Data Factory
+* Databricks **Community Edition** account
+
+Optional:
+
+* Azure Storage Explorer (recommended for beginners)
 
 ---
 
-## 3 — Create a Service Principal (SP) and assign blob role
-Use the helper script or run manually.
+## 5. How CSV data arrives in Azure (important concept)
 
-A. Using helper script:
+This project assumes **CSV files already arrive in Azure Data Lake Storage**.
+
+This is very common in real-world systems where:
+
+* Vendors drop daily CSV exports
+* Applications write files directly to storage
+* Databases export snapshots
+* SFTP feeds land files automatically
+
+For learning and demos, **manual upload is perfectly acceptable**.
+
+---
+
+## 6. Create Azure resources
+
+### A. Create Resource Group & Storage Account
+
+Use the provided script:
+
 ```bash
-chmod +x azure/create_sp_and_role.sh
-./azure/create_sp_and_role.sh my-rg mystorageacct123 sp-health-data
+./azure/create_resources.sh my-rg eastus mystorageacct123
 ```
-The command prints JSON with `clientId`, `clientSecret`, `tenantId` — save this JSON securely (or place into Azure Key Vault).
 
-B. Manual (CLI):
+This creates:
+
+* Resource Group
+* ADLS Gen2 Storage Account
+* Containers:
+
+  * `incoming` (raw files)
+  * `processed` (Delta tables)
+  * `archive` (historical raw files)
+  * `control` (run metadata)
+
+Alternatively, create the same resources using the Azure Portal.
+
+---
+
+## 7. Upload CSV files to ADLS Gen2
+
+Upload CSV files to the **incoming** container.
+
+### Recommended folder structure
+
+```
+incoming/
+└── registrations/
+    └── run=2026-01-04/
+        └── sample_registrations.csv
+```
+
+### Upload options
+
+**Option A — Azure Storage Explorer**
+
+* Drag & drop the file
+
+**Option B — Azure CLI**
+
 ```bash
-SUB_ID=$(az account show --query id -o tsv)
-az ad sp create-for-rbac --name sp-health-data \
-  --role "Storage Blob Data Contributor" \
-  --scopes /subscriptions/$SUB_ID/resourceGroups/my-rg/providers/Microsoft.Storage/storageAccounts/mystorageacct123 \
-  --sdk-auth
+az storage blob upload \
+  --account-name mystorageacct123 \
+  --container-name incoming \
+  --name registrations/run=2026-01-04/sample_registrations.csv \
+  --file data/sample_registrations.csv
 ```
 
-You’ll use the SP credentials when creating the ADLS linked service in ADF and/or configuring Databricks to access ADLS.
+---
+
+## 8. Azure Data Factory setup
+
+### Create Data Factory
+
+1. Azure Portal → Create Resource → **Azure Data Factory**
+2. Choose Resource Group & region
+3. Create without Git integration (simpler)
 
 ---
 
-## 4 — Create Azure Data Factory and install Self‑Hosted Integration Runtime (SH IR)
-A. Create Data Factory
-- Portal → Create resource → Data Factory → Fill name & RG → Git configuration optional → Create.
+## 9. ADF pipeline responsibility (important)
 
-B. Install SH IR (on your laptop) to let ADF access local SQL Server
-1. In Azure Portal → Data Factory → Manage (left) → Integration Runtimes → + New → Self‑Hosted.
-2. Follow wizard; it will generate a key and download an installer (Windows).
-3. Run the installer on your laptop. When prompted, paste the auto-generated authentication key to register the node.
-4. Confirm in ADF that the SH IR shows state: Online.
+Because this project uses **Databricks Community Edition**, ADF does **not** trigger Databricks directly.
 
-Notes:
-- SH IR initiates outbound HTTPS (443) to Azure — no inbound firewall changes needed.
-- If your laptop sleeps or is restarted often, run pipelines manually or run SH IR on a small always‑on VM.
+ADF is responsible for:
 
----
+* Organizing raw files
+* Creating run-based folders
+* Archiving processed CSVs
+* (Optionally) writing run metadata
 
-## 5 — Provision Databricks (two options)
-Option A — Databricks Community (free)
-- Good for learning notebooks and PySpark.
-- Limitations: integrating with ADLS via SP is harder; you may upload files to DBFS manually.
+Databricks is run **separately**.
 
-Option B — Azure Databricks workspace (recommended for integration)
-- Portal → Create resource → Azure Databricks → Workspace → Create.
-- Use Databricks clusters with auto-termination and small worker types to control costs.
-
-Configuring Databricks to access ADLS Gen2 (when using Azure Databricks):
-- Use the SP credentials and set up a scoped secret in Databricks or mount via abfss with Spark config.
-- Follow Databricks docs: Configure access to Azure Data Lake Storage Gen2 using service principal: https://learn.microsoft.com/azure/databricks/data/data-sources/azure/azure-datalake-gen2
+This limitation is **intentional and realistic** for low-cost setups.
 
 ---
 
-## 6 — Create Linked Services & Datasets in ADF
-In ADF (Author tab):
+## 10. Import ADF pipeline
 
-1. Linked Service: On‑prem SQL Server
-   - Type: Azure SQL Database / SQL Server (choose SQL Server).
-   - For Integration Runtime: select your Self‑Hosted IR.
-   - Server name: your local machine name or IP (accessible from SH IR host).
-   - Auth: SQL Authentication (create a read‑only SQL user for extraction).
+1. Open ADF → Author tab
+2. Pipelines → **Import from JSON**
+3. Select:
 
-2. Linked Service: ADLS Gen2
-   - Type: Azure Data Lake Storage Gen2 (Azure Data Lake Storage Gen2).
-   - Auth method: Service principal (use clientId/clientSecret/tenantId from SP). Prefer Key Vault to store secret.
+```
+adf/pipeline_registrations.json
+```
 
-3. Linked Service: Azure Databricks
-   - Use Workspace URL and personal access token (create token in Databricks User Settings).
+### After import
 
-4. Create datasets:
-   - Source dataset: SQL (table/query) — you can define dataset type `AzureSqlTable` or `AzureSqlQuery`.
-   - Sink dataset: AzureBlobFS / ADLS pointing to `incoming/registrations/run=<run_id>` path (CSV).
-
-Important: After you import the pipeline JSON, edit the pipeline to reference the exact Linked Service and Dataset names you created.
+* Update Linked Service names
+* Disable or remove Databricks activities (if present)
+* Validate pipeline
 
 ---
 
-## 7 — Import and configure the ADF pipeline
-1. In ADF Author → Pipelines → Import from JSON → select `adf/pipeline_registrations.json`.
-2. Edit the pipeline in the UI:
-   - Replace `LS_OnPrem_SQL_SHIR`, `LS_AzureDatabricks`, `LS_AzureSQL_Control` and dataset names with the names you created.
-   - Replace `<STORAGE>` placeholders in the Databricks notebook activity `baseParameters.run_path` and `processed_base` with your storage account name (or use parameterized dataset).
-   - For the Copy activity `sqlReaderQuery`, set it as dynamic content if needed. Example expression to set `start_date` and `end_date` using pipeline variables:
-     - Use the pipeline's Set Variable activity already provided. In Copy activity source, choose `Query` and paste:
-       ```
-       SELECT * FROM dbo.patient_registrations
-       WHERE modified_at >= '@{variables('start_date')}'
-         AND modified_at < '@{variables('end_date')}'
-       ```
-     - If paste doesn't accept variables directly, use dataset parameterization or build the query in a Lookup activity and pass to the Copy activity.
+## 11. Databricks Community Edition setup
 
-3. Save the pipeline.
+### Upload notebook
+
+1. Log into Databricks Community Edition
+2. Workspace → Create → Notebook
+3. Paste contents of:
+
+```
+notebooks/ingest_and_merge_registrations.py
+```
 
 ---
 
-## 8 — Deploy Databricks notebook & test locally
-A. Upload notebook:
-- In Databricks workspace → Repos or Workspace → Create → File → Paste `notebooks/ingest_and_merge_registrations.py` content.
-- Create a Job (optional) that runs the notebook with parameters:
-  - `run_path` (e.g., `abfss://incoming@mystorageacct123.dfs.core.windows.net/registrations/run=run_20260104/`)
-  - `processed_base` (e.g., `abfss://processed@mystorageacct123.dfs.core.windows.net/`)
-  - `run_id` (string)
+## 12. Accessing data in Databricks Community
 
-B. Test notebook manually:
-- Upload the sample CSV to the incoming path:
-  - Use Azure Storage Explorer to upload `data/sample_registrations.csv` to `incoming/registrations/run=test_run/`.
-  - OR use `az storage blob upload` (example):
-    ```bash
-    az storage blob upload --account-name mystorageacct123 --container-name incoming --name registrations/run=test_run/sample_registrations.csv --file data/sample_registrations.csv
-    ```
-- Run the notebook in Databricks (or run job) with `run_path` pointing to the uploaded file.
-- Confirm outputs in `processed` container (Delta files under `staging/patient_registrations/` and `reports/fact_registrations/`).
+Databricks Community **cannot securely mount ADLS Gen2**.
 
----
+For learning purposes, use one of these approaches:
 
-## 9 — Wire ADF pipeline to run end‑to‑end
-1. In your imported pipeline, ensure the Databricks Notebook activity points to the notebook path and passes correct parameters (`run_path`, `processed_base`, `run_id`).
-2. Manually trigger the pipeline with default parameters, or schedule a trigger.
-3. Monitor pipeline runs in ADF Monitor tab. If failures occur, click the activity to view logs. For Databricks failure logs, open the Databricks run.
+### Option A — Temporary public container (demo only)
 
-Validation checklist (after successful run)
-- Raw file moved from `incoming` to `archive/<date>/` (or archived per pipeline).
-- Delta files in processed container: `staging/patient_registrations/` and `reports/fact_registrations/`.
-- `control/runs/` contains run metadata (parquet) OR Azure SQL `pipeline_runs` updated (if you implemented stored proc).
-- Re-run same `run_id` or same window — ensure no duplicate rows in Delta (idempotency via merge).
+* Make container public
+* Read using HTTPS
+
+### Option B — Upload CSVs to DBFS (recommended for Community)
+
+```python
+dbutils.fs.cp(
+  "file:/Workspace/sample_registrations.csv",
+  "dbfs:/tmp/registrations/sample_registrations.csv"
+)
+```
+
+Then read:
+
+```python
+spark.read.csv("dbfs:/tmp/registrations/", header=True)
+```
 
 ---
 
-## 10 — Testing scenarios to validate behavior
-- Idempotency: Run same pipeline twice — no duplicate `registration_id` in Delta.
-- Updates: Update a row in local SQL with a later `modified_at` and re-run — Delta row should be updated.
-- Late data: Insert a backdated modified row that falls into overlapping 7‑day window — verify it’s captured and merged.
-- Error handling: Force a failure (e.g., bad schema), inspect ADF activity logs and Databricks job logs.
+## 13. Databricks processing logic
+
+The notebook performs:
+
+* Explicit schema enforcement
+* Deduplication by `registration_id`
+* Enrichment (derived fields)
+* Delta Lake MERGE (idempotent)
+
+### Output structure
+
+```
+processed/
+├── staging/patient_registrations
+└── reports/fact_registrations
+```
 
 ---
 
-## 11 — Monitoring, alerts & housekeeping
-- Enable ADF diagnostic logs to Log Analytics to create alerts on pipeline failures.
-- In Databricks, configure job failure alerts to email or webhooks.
-- Implement retention: automatically expire/archive raw files older than X days; compact Delta files periodically (Databricks `OPTIMIZE` if using Databricks runtime).
-- Clean up unused resources: stop Databricks clusters, delete test Resource Group when finished:
-  ```bash
-  az group delete -n my-rg --yes --no-wait
-  ```
+## 14. Validation scenarios
+
+Run the notebook multiple times to validate:
+
+* ✅ Idempotency (no duplicates)
+* ✅ Updates overwrite existing records
+* ✅ Late-arriving records are merged correctly
 
 ---
 
-## 12 — Cost‑saving tips (personal account)
-- Use Databricks Community Edition for notebook dev (free). For integration testing use a tiny Azure Databricks cluster and set auto-termination to 5–10 minutes.
-- Use serverless Synapse (if performing small queries) instead of dedicated pools.
-- Use the smallest SQL tier if you need Azure SQL for control table, or use parquet/delta (cheaper).
-- Delete or stop compute resources when idle.
+## 15. Cost considerations
+
+* Databricks Community Edition = **free**
+* ADLS Gen2 costs are minimal for small CSVs
+* No always-on compute
 
 ---
 
-## 13 — Troubleshooting notes (common issues)
-- SH IR shows Offline: re-run the installer and verify the auth key; ensure machine has outbound 443 access.
-- ADF Copy times out: check network bandwidth and SH IR machine CPU; consider splitting extract (predicate pushdown) or using staging in sink.
-- Databricks cannot access ADLS: verify SP role assignment, ensure correct configs or mount using dbutils with secrets. Use Databricks docs for ADLS Gen2 + SP.
-- Schema drift: make casts explicit in notebook; use `inferSchema=false` and a pre-defined schema for robust production pipelines.
+## 16. Known limitations (intentional)
+
+* No direct ADF → Databricks trigger
+* Simplified security model
+* File-based ingestion only
+
+These are deliberate trade-offs for learning and cost control.
 
 ---
 
-## 14 — Next recommended enhancements (later)
-- Replace overlapping 7‑day window with CDC (SQL Server CDC + eventing) for efficient incremental capture.
-- Implement SCD Type 2 for patient dimension using Delta merges and effective dates.
-- Add infra as code (ARM/Bicep/Terraform) for consistent provisioning.
-- Add automated tests and a small GitHub Actions workflow to validate pipeline JSON and check notebook syntax.
+## 17. Future enhancements
+
+* Move to Azure Databricks for full integration
+* Add SFTP → ADLS ingestion
+* Implement CDC-based ingestion
+* Add CI/CD for ADF pipelines
+* Implement SCD Type 2 dimensions
 
 ---
+
+## 18. How to explain this project in interviews
+
+> “This project demonstrates a file-based Azure data pipeline where CSV files land in ADLS Gen2, Azure Data Factory handles orchestration and file management, and Databricks Community Edition performs transformation and Delta Lake merges. The design mirrors real-world ingestion patterns while remaining cost-effective.”
+
