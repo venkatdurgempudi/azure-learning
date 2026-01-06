@@ -99,5 +99,6 @@ def main():
     write_unit_master("data/unit_master.csv")
     generate_registrations(args.out, args.rows, args.start, args.end, seed=args.seed)
 
+# Run the main function
 if __name__ == "__main__":
     main()

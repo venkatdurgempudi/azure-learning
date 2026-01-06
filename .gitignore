@@ -1,9 +1,46 @@
-# Ignore secrets and local settings
-secrets/**
-!secrets/README.md
+# =========================
+# Secrets & Credentials
+# =========================
+.env
 *.env
+secrets/
+*.secret
+*.key
 *.pem
 *.pfx
-.vscode/
+
+# =========================
+# Azure / Databricks
+# =========================
+.databricks/
+dbfs/
+
+# =========================
+# Python
+# =========================
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# =========================
+# Virtual Environments
+# =========================
+venv/
+.env/
+.venv/
+
+# =========================
+# OS / Editor files
+# =========================
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# =========================
+# Logs & Temp
+# =========================
+*.log
+tmp/
+# =========================
