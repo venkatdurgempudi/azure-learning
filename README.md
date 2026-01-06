@@ -1,43 +1,44 @@
-# Azure Data Engineering — Registrations Pipeline (CSV + Databricks Community Edition)
+# Azure Data Engineering — Registrations Pipeline (CSV + Azure Databricks)
 
-This repository contains a **detailed, end-to-end Azure data engineering demo project** that processes **CSV-based registration data** using **Azure Data Factory**, **Azure Data Lake Storage Gen2**, and **Databricks Community Edition**.
+This repository contains a **complete, end-to-end Azure data engineering project** that processes **CSV-based registration data** using **Azure Data Lake Storage Gen2 (ADLS)**, **Azure Databricks**, and **Azure Data Factory (ADF)**.
 
-The project is intentionally designed to be:
+The project is designed to be:
 
-* ✅ **Low-cost / free-tier friendly**
+* ✅ **Low-cost & Pay‑As‑You‑Go friendly**
 * ✅ **Runnable by an individual learner**
-* ✅ **Interview-ready**, showing real-world Azure data engineering patterns
+* ✅ **Production‑realistic & interview‑ready**
 
-This is **not a toy example** — it mirrors how file-based ingestion pipelines are commonly built in production.
+This is **not a toy pipeline**. It intentionally mirrors **real-world file-based ingestion patterns** used across healthcare, retail, and enterprise analytics platforms.
 
 ---
 
 ## 1. High-level architecture
 
-**One-line flow**
+### One-line flow
 
-CSV files → ADLS Gen2 (incoming) → Azure Data Factory (orchestration & archive) → Databricks Community (transform & merge) → ADLS Gen2 (processed Delta)
+CSV files → ADLS Gen2 (incoming) → Azure Databricks (history + daily MERGE) → ADLS Gen2 (Delta tables)
 
-**Key design principle**
+### Key design principles
 
-* Data **lands in storage first**
-* Azure Data Factory manages **file movement & orchestration**
-* Databricks handles **business logic and transformations only**
+* Data **lands in storage first** (decoupled ingestion)
+* ADLS Gen2 is the **system of record**
+* Databricks performs **all transformations & business logic**
+* Delta Lake ensures **idempotency, updates, and ACID guarantees**
 
 ---
 
 ## 2. What this project demonstrates
 
-This project demonstrates core Azure data engineering skills:
+This project demonstrates **core Azure Data Engineering skills**:
 
 * File-based ingestion (CSV)
-* Azure Data Lake Storage Gen2 layout design
-* Azure Data Factory pipelines and orchestration
-* Medallion architecture (Raw → Staging → Curated)
-* Incremental + idempotent processing
-* Delta Lake MERGE for deduplication
-* Cost-aware architectural decisions
-* Clear separation of concerns
+* ADLS Gen2 container & folder layout design
+* Historical (bootstrap) + daily incremental processing
+* Explicit schema enforcement
+* Data quality handling (timestamp parsing)
+* Delta Lake MERGE with **business keys**
+* Idempotent, re-runnable pipelines
+* Cost-aware Azure Databricks usage
 
 ---
 
@@ -46,29 +47,30 @@ This project demonstrates core Azure data engineering skills:
 ```
 .
 ├── LICENSE
-├── README.md                 # Main project documentation
+├── README.md
 ├── adf/
-│   └── pipeline_registrations.json   # Azure Data Factory pipeline (CSV orchestration)
+│   └── pipeline_registrations.json
 ├── azure/
-│   ├── create_resources.sh           # Creates RG + ADLS Gen2 + containers
-│   └── create_sp_and_role.sh         # Creates Service Principal for ADLS access
+│   ├── create_resources.sh
+│   └── create_sp_and_role.sh
 ├── data/
-│   ├── registrations.csv             # Sample registration fact data (CSV source)
-│   ├── gender_master.csv             # Reference / master data
-│   └── unit_master.csv               # Reference / master data
+│   ├── registrations.csv
+│   ├── gender_master.csv
+│   └── unit_master.csv
 ├── notebooks/
-│   └── ingest_and_merge_registrations.py  # Databricks PySpark notebook (Delta MERGE)
+│   ├── 01_ingest_registrations_history.py
+│   └── 02_ingest_registrations_daily.py
 ├── sql/
-│   ├── sample_ddl.sql                # Optional SQL schema (control / demo use)
-│   └── usp_insert_run_record.sql     # Optional run-metadata stored procedure
+│   ├── sample_ddl.sql
+│   └── usp_insert_run_record.sql
 ├── tools/
-│   ├── gen-tree.sh                   # Utility to print repo tree
-│   └── generate_mock_registrations.py# Generates synthetic CSV registration data
+│   ├── gen-tree.sh
+│   └── generate_mock_registrations.py
 ├── secrets/
-│   └── README.md                     # Guidance for handling secrets (no secrets committed)
+│   └── README.md
 ├── learning/
-│   ├── README.md                     # Learning notes & walkthroughs
-│   └── resources.md                  # Reference links & study material
+│   ├── README.md
+│   └── resources.md
 ```
 
 ---
@@ -77,239 +79,219 @@ This project demonstrates core Azure data engineering skills:
 
 ### Local
 
-* Git (optional)
-* VS Code or any text editor
+* Git
+* VS Code or any editor
 * Azure CLI (`az login` completed)
 
 ### Azure
 
-* Azure subscription (Free Trial is fine)
-* Azure Storage Account (ADLS Gen2 enabled)
-* Azure Data Factory
-* Databricks **Community Edition** account
+* Azure Subscription (Free Trial / PAYG)
+* ADLS Gen2 Storage Account (HNS enabled)
+* Azure Databricks (Standard tier)
+* Azure Data Factory (optional orchestration)
 
-Optional:
+Recommended:
 
-* Azure Storage Explorer (recommended for beginners)
-
----
-
-## 5. How CSV data arrives in Azure (important concept)
-
-This project assumes **CSV files already arrive in Azure Data Lake Storage**.
-
-This is very common in real-world systems where:
-
-* Vendors drop daily CSV exports
-* Applications write files directly to storage
-* Databases export snapshots
-* SFTP feeds land files automatically
-
-For learning and demos, **manual upload is perfectly acceptable**.
+* Azure Storage Explorer
 
 ---
 
-## 6. Create Azure resources
+## 5. How CSV data arrives in Azure
 
-### A. Create Resource Group & Storage Account
+This project assumes **CSV files already land in ADLS Gen2**, which is common in production systems:
+
+* Vendor feeds
+* Batch exports
+* SFTP drops
+* Application snapshots
+
+For learning purposes, **manual upload is perfectly acceptable**.
+
+---
+
+## 6. ADLS Gen2 layout
+
+```
+incoming/
+├── registrations/
+│   ├── run=manual_001/          # historical bootstrap
+│   └── run_date=YYYY-MM-DD/     # daily increments
+├── masters/
+│   ├── gender_master.csv
+│   └── unit_master.csv
+
+processed/
+└── reports/
+    └── fact_registrations/      # Delta Lake table
+```
+
+---
+
+## 7. Create Azure resources
 
 Use the provided script:
 
 ```bash
-./azure/create_resources.sh my-rg eastus mystorageacct123
+./azure/create_resources.sh rg-registrations eastus stregistrationsde001
 ```
 
-This creates:
+Creates:
 
 * Resource Group
 * ADLS Gen2 Storage Account
-* Containers:
-
-  * `incoming` (raw files)
-  * `processed` (Delta tables)
-  * `archive` (historical raw files)
-  * `control` (run metadata)
-
-Alternatively, create the same resources using the Azure Portal.
+* Containers: `incoming`, `processed`, `archive`, `control`
 
 ---
 
-## 7. Upload CSV files to ADLS Gen2
+## 8. Upload CSV files
 
-Upload CSV files to the **incoming** container.
+Upload CSVs to ADLS using:
 
-### Recommended folder structure
+* Azure Storage Explorer (recommended)
+* Azure CLI
 
-```
-incoming/
-└── registrations/
-    └── run=2026-01-04/
-        └── sample_registrations.csv
-```
-
-### Upload options
-
-**Option A — Azure Storage Explorer**
-
-* Drag & drop the file
-
-**Option B — Azure CLI**
+Example:
 
 ```bash
 az storage blob upload \
-  --account-name mystorageacct123 \
+  --account-name stregistrationsde001 \
   --container-name incoming \
-  --name registrations/run=2026-01-04/sample_registrations.csv \
-  --file data/sample_registrations.csv
+  --name registrations/run_date=2026-01-05/registrations.csv \
+  --file data/registrations.csv
 ```
 
 ---
 
-## 8. Azure Data Factory setup
+## 9. Azure Databricks setup
 
-### Create Data Factory
+### Create workspace
 
-1. Azure Portal → Create Resource → **Azure Data Factory**
-2. Choose Resource Group & region
-3. Create without Git integration (simpler)
+* Azure Portal → Azure Databricks
+* Standard tier (PAYG)
+* Single-node clusters for cost control
 
----
+### Cluster settings (important)
 
-## 9. ADF pipeline responsibility (important)
-
-Because this project uses **Databricks Community Edition**, ADF does **not** trigger Databricks directly.
-
-ADF is responsible for:
-
-* Organizing raw files
-* Creating run-based folders
-* Archiving processed CSVs
-* (Optionally) writing run metadata
-
-Databricks is run **separately**.
-
-This limitation is **intentional and realistic** for low-cost setups.
+* Mode: Single Node
+* Auto-termination: 10 minutes
+* Smallest available VM
 
 ---
 
-## 10. Import ADF pipeline
+## 10. Authentication (ADLS → Databricks)
 
-1. Open ADF → Author tab
-2. Pipelines → **Import from JSON**
-3. Select:
+Databricks accesses ADLS using **Service Principal OAuth**:
 
-```
-adf/pipeline_registrations.json
-```
+* Client ID
+* Client Secret
+* Tenant ID
 
-### After import
-
-* Update Linked Service names
-* Disable or remove Databricks activities (if present)
-* Validate pipeline
+OAuth config is applied **inside notebooks** for learning purposes.
 
 ---
 
-## 11. Databricks Community Edition setup
+## 11. Processing design
 
-### Upload notebook
+### Phase 1 — Historical bootstrap (one-time)
 
-1. Log into Databricks Community Edition
-2. Workspace → Create → Notebook
-3. Paste contents of:
+Notebook:
 
 ```
-notebooks/ingest_and_merge_registrations.py
+01_ingest_registrations_history
 ```
+
+* Reads `incoming/registrations/run=manual_001/`
+* Deduplicates by business key
+* Writes initial Delta table
+
+### Phase 2 — Daily incremental loads
+
+Notebook:
+
+```
+02_ingest_registrations_daily
+```
+
+* Reads one `run_date`
+* Explicit timestamp parsing (`yyyy-MM-dd HH:mm:ss`)
+* Deduplicates latest records
+* MERGEs into Delta table
 
 ---
 
-## 12. Accessing data in Databricks Community
+## 12. Delta Lake MERGE logic (critical)
 
-Databricks Community **cannot securely mount ADLS Gen2**.
+The **business key** used for idempotency:
 
-For learning purposes, use one of these approaches:
+```
+(registration_id, patient_id, unit_id)
+```
 
-### Option A — Temporary public container (demo only)
+MERGE behavior:
 
-* Make container public
-* Read using HTTPS
+* Match → UPDATE existing row
+* No match → INSERT new row
 
-### Option B — Upload CSVs to DBFS (recommended for Community)
+Final table always contains **one row per business key**.
+
+---
+
+## 13. Output
+
+Output is a **Delta Lake table**, not a single file:
+
+```
+processed/reports/fact_registrations/
+├── _delta_log/
+└── part-*.parquet
+```
+
+Query using Databricks:
 
 ```python
-dbutils.fs.cp(
-  "file:/Workspace/sample_registrations.csv",
-  "dbfs:/tmp/registrations/sample_registrations.csv"
-)
-```
-
-Then read:
-
-```python
-spark.read.csv("dbfs:/tmp/registrations/", header=True)
-```
-
----
-
-## 13. Databricks processing logic
-
-The notebook performs:
-
-* Explicit schema enforcement
-* Deduplication by `registration_id`
-* Enrichment (derived fields)
-* Delta Lake MERGE (idempotent)
-
-### Output structure
-
-```
-processed/
-├── staging/patient_registrations
-└── reports/fact_registrations
+spark.read.format("delta").load(FACT_PATH).show()
 ```
 
 ---
 
 ## 14. Validation scenarios
 
-Run the notebook multiple times to validate:
-
-* ✅ Idempotency (no duplicates)
-* ✅ Updates overwrite existing records
-* ✅ Late-arriving records are merged correctly
+* Re-run same daily file → no duplicates
+* Update existing registration → row updated
+* Late-arriving data → merged correctly
 
 ---
 
 ## 15. Cost considerations
 
-* Databricks Community Edition = **free**
-* ADLS Gen2 costs are minimal for small CSVs
-* No always-on compute
+* Azure Databricks PAYG
+* Single-node cluster
+* Auto-termination enabled
+
+Typical learning cost:
+
+* ₹150–₹250 per month
 
 ---
 
 ## 16. Known limitations (intentional)
 
-* No direct ADF → Databricks trigger
-* Simplified security model
 * File-based ingestion only
-
-These are deliberate trade-offs for learning and cost control.
+* Manual Databricks execution (no jobs yet)
+* Simplified security for learning
 
 ---
 
 ## 17. Future enhancements
 
-* Move to Azure Databricks for full integration
-* Add SFTP → ADLS ingestion
-* Implement CDC-based ingestion
-* Add CI/CD for ADF pipelines
-* Implement SCD Type 2 dimensions
+* Databricks Jobs (scheduling)
+* ADF orchestration end-to-end
+* CDC-based ingestion
+* SCD Type 2 dimensions
+* Data quality dashboards
 
 ---
 
 ## 18. How to explain this project in interviews
 
-> “This project demonstrates a file-based Azure data pipeline where CSV files land in ADLS Gen2, Azure Data Factory handles orchestration and file management, and Databricks Community Edition performs transformation and Delta Lake merges. The design mirrors real-world ingestion patterns while remaining cost-effective.”
-
+> “This project implements a production-style Azure data pipeline where CSV files land in ADLS Gen2, Azure Databricks performs historical and daily incremental processing using Delta Lake MERGE with business keys, and the final curated dataset represents the latest state of registrations in an idempotent and cost-efficient manner.”
