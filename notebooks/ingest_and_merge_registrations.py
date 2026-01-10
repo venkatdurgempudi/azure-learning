@@ -1,5 +1,6 @@
 # ============================================================
 # Azure Databricks – Daily Incremental Registrations Load
+# (ENRICHED – FINAL, STABLE VERSION)
 # ============================================================
 
 from pyspark.sql import functions as F
@@ -8,66 +9,31 @@ from pyspark.sql.types import *
 from delta.tables import DeltaTable
 
 # ------------------------------------------------------------
-# PARAMETERS
+# 0. SPARK SAFETY SETTINGS (CRITICAL)
+# ------------------------------------------------------------
+
+spark.conf.set("spark.sql.sources.partitionDiscovery.enabled", "false")
+spark.conf.set("spark.sql.sources.partitionColumnTypeInference.enabled", "false")
+spark.catalog.clearCache()
+
+# ------------------------------------------------------------
+# 1. PARAMETERS
 # ------------------------------------------------------------
 
 RUN_DATE = "2026-01-05"
 STORAGE_ACCOUNT = "stregistrationsde001"
 
-# ------------------------------------------------------------
-# SECURE ADLS AUTH (Databricks Secret Scope)
-# ------------------------------------------------------------
-
-CLIENT_ID = dbutils.secrets.get("adls-secrets", "client-id")
-CLIENT_SECRET = dbutils.secrets.get("adls-secrets", "client-secret")
-TENANT_ID = dbutils.secrets.get("adls-secrets", "tenant-id")
-
-# Clear any accidental key-based config
-try:
-    spark.conf.unset(
-        f"fs.azure.account.key.{STORAGE_ACCOUNT}.dfs.core.windows.net"
-    )
-except:
-    pass
-
-spark.conf.set(
-    f"fs.azure.account.auth.type.{STORAGE_ACCOUNT}.dfs.core.windows.net",
-    "OAuth"
-)
-spark.conf.set(
-    f"fs.azure.account.oauth.provider.type.{STORAGE_ACCOUNT}.dfs.core.windows.net",
-    "org.apache.hadoop.fs.azurebfs.oauth2.ClientCredsTokenProvider"
-)
-spark.conf.set(
-    f"fs.azure.account.oauth2.client.id.{STORAGE_ACCOUNT}.dfs.core.windows.net",
-    CLIENT_ID
-)
-spark.conf.set(
-    f"fs.azure.account.oauth2.client.secret.{STORAGE_ACCOUNT}.dfs.core.windows.net",
-    CLIENT_SECRET
-)
-spark.conf.set(
-    f"fs.azure.account.oauth2.client.endpoint.{STORAGE_ACCOUNT}.dfs.core.windows.net",
-    f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/token"
-)
-
-# ------------------------------------------------------------
-# PATHS
-# ------------------------------------------------------------
-
-INCOMING_BASE = f"abfss://incoming@{STORAGE_ACCOUNT}.dfs.core.windows.net"
+INCOMING_BASE  = f"abfss://incoming@{STORAGE_ACCOUNT}.dfs.core.windows.net"
 PROCESSED_BASE = f"abfss://processed@{STORAGE_ACCOUNT}.dfs.core.windows.net"
 
-REGISTRATIONS_PATH = (
-    f"{INCOMING_BASE}/registrations/run={RUN_DATE}/"
-)
+REGISTRATIONS_PATH = f"{INCOMING_BASE}/registrations/run_date={RUN_DATE}"
+GENDER_MASTER_PATH = f"{INCOMING_BASE}/masters/gender_master.csv"
+UNIT_MASTER_PATH   = f"{INCOMING_BASE}/masters/unit_master.csv"
 
-FACT_PATH = (
-    f"{PROCESSED_BASE}/reports/fact_registrations"
-)
+FACT_PATH = f"{PROCESSED_BASE}/reports/fact_registrations"
 
 # ------------------------------------------------------------
-# EXPLICIT SCHEMA (AS STRING FIRST)
+# 2. EXPLICIT SCHEMA (READ AS STRING FIRST)
 # ------------------------------------------------------------
 
 daily_schema = StructType([
@@ -82,18 +48,24 @@ daily_schema = StructType([
 ])
 
 # ------------------------------------------------------------
-# READ DAILY CSV
+# 3. READ DAILY DATA (FLAT, NO PARTITIONS)
 # ------------------------------------------------------------
 
 raw_df = (
     spark.read
     .schema(daily_schema)
     .option("header", True)
+    .option("recursiveFileLookup", "true")
     .csv(REGISTRATIONS_PATH)
 )
 
+# Defensive cleanup (in case Spark injects columns)
+cols_to_drop = [c for c in ["run", "run_date"] if c in raw_df.columns]
+if cols_to_drop:
+    raw_df = raw_df.drop(*cols_to_drop)
+
 # ------------------------------------------------------------
-# SAFE TIMESTAMP PARSING (MULTI FORMAT)
+# 4. SAFE TIMESTAMP PARSING
 # ------------------------------------------------------------
 
 def parse_ts(col):
@@ -111,16 +83,16 @@ parsed_df = (
 )
 
 # ------------------------------------------------------------
-# REJECT BAD ROWS (DO NOT FAIL PIPELINE)
+# 5. FILTER BAD RECORDS (NON-BLOCKING)
 # ------------------------------------------------------------
 
-rejected_count = parsed_df.filter(F.col("modified_at").isNull()).count()
-print(f"Rejected rows due to bad timestamp: {rejected_count}")
+bad_count = parsed_df.filter(F.col("modified_at").isNull()).count()
+print(f"Rejected rows due to bad timestamp: {bad_count}")
 
 clean_df = parsed_df.filter(F.col("modified_at").isNotNull())
 
 # ------------------------------------------------------------
-# DEDUPLICATION (LATEST PER REGISTRATION)
+# 6. DEDUPLICATION (LATEST PER REGISTRATION)
 # ------------------------------------------------------------
 
 window_spec = (
@@ -137,18 +109,36 @@ dedup_df = (
 )
 
 # ------------------------------------------------------------
-# ENRICHMENT / METADATA
+# 7. READ MASTER DATA
+# ------------------------------------------------------------
+
+gender_df = (
+    spark.read
+    .option("header", True)
+    .csv(GENDER_MASTER_PATH)
+)
+
+unit_df = (
+    spark.read
+    .option("header", True)
+    .csv(UNIT_MASTER_PATH)
+)
+
+# ------------------------------------------------------------
+# 8. ENRICH DAILY DATA (OPTION 1 – REQUIRED)
 # ------------------------------------------------------------
 
 enriched_df = (
     dedup_df
+    .join(gender_df, "gender_id", "left")
+    .join(unit_df, "unit_id", "left")
     .withColumn("load_type", F.lit("DAILY"))
     .withColumn("run_date", F.lit(RUN_DATE))
     .withColumn("ingested_at", F.current_timestamp())
 )
 
 # ------------------------------------------------------------
-# MERGE INTO FACT TABLE (CORRECT BUSINESS KEYS)
+# 9. MERGE INTO FACT TABLE
 # ------------------------------------------------------------
 
 target = DeltaTable.forPath(spark, FACT_PATH)
@@ -163,34 +153,13 @@ target = DeltaTable.forPath(spark, FACT_PATH)
         AND t.unit_id = s.unit_id
         """
     )
-    .whenMatchedUpdate(set={
-        "gender_id": "s.gender_id",
-        "source": "s.source",
-        "reg_dt": "s.reg_dt",
-        "created_at": "s.created_at",
-        "modified_at": "s.modified_at",
-        "load_type": "s.load_type",
-        "run_date": "s.run_date",
-        "ingested_at": "s.ingested_at"
-    })
-    .whenNotMatchedInsert(values={
-        "registration_id": "s.registration_id",
-        "patient_id": "s.patient_id",
-        "gender_id": "s.gender_id",
-        "unit_id": "s.unit_id",
-        "source": "s.source",
-        "reg_dt": "s.reg_dt",
-        "created_at": "s.created_at",
-        "modified_at": "s.modified_at",
-        "load_type": "s.load_type",
-        "run_date": "s.run_date",
-        "ingested_at": "s.ingested_at"
-    })
+    .whenMatchedUpdateAll()
+    .whenNotMatchedInsertAll()
     .execute()
 )
 
 # ------------------------------------------------------------
-# FINAL VALIDATION
+# 10. FINAL VALIDATION
 # ------------------------------------------------------------
 
 spark.read.format("delta") \
@@ -199,9 +168,11 @@ spark.read.format("delta") \
     .count() \
     .show()
 
-print(f"✅ Daily load completed successfully for {RUN_DATE}")
+print(f"✅ Daily incremental load completed successfully for {RUN_DATE}")
 
 spark.read.format("delta") \
-    .load(FACT_PATH) \
-    .filter("registration_id = '1027'") \
-    .show(truncate=False)
+  .load(FACT_PATH) \
+  .groupBy("run_date", "load_type") \
+  .count() \
+  .show()
+
