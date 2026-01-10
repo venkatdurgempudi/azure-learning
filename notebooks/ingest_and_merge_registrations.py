@@ -15,10 +15,14 @@ RUN_DATE = "2026-01-05"
 STORAGE_ACCOUNT = "stregistrationsde001"
 
 # ------------------------------------------------------------
-# ADLS OAUTH CONFIGURATION
+# SECURE ADLS AUTH (Databricks Secret Scope)
 # ------------------------------------------------------------
 
-# Clear any old key-based config
+CLIENT_ID = dbutils.secrets.get("adls-secrets", "client-id")
+CLIENT_SECRET = dbutils.secrets.get("adls-secrets", "client-secret")
+TENANT_ID = dbutils.secrets.get("adls-secrets", "tenant-id")
+
+# Clear any accidental key-based config
 try:
     spark.conf.unset(
         f"fs.azure.account.key.{STORAGE_ACCOUNT}.dfs.core.windows.net"
@@ -26,28 +30,26 @@ try:
 except:
     pass
 
-
-# 🔴 REPLACE THESE 3 VALUES
-CLIENT_ID = "<CLIENT_ID>"
-CLIENT_SECRET = "<CLIENT_SECRET>"
-TENANT_ID = "<TENANT_ID>"
-
-
-
-configs = {
-    "fs.azure.account.auth.type": "OAuth",
-    "fs.azure.account.oauth.provider.type":
-        "org.apache.hadoop.fs.azurebfs.oauth2.ClientCredsTokenProvider",
-    "fs.azure.account.oauth2.client.id": CLIENT_ID,
-    "fs.azure.account.oauth2.client.secret": CLIENT_SECRET,
-    "fs.azure.account.oauth2.client.endpoint":
-        f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/token"
-}
-
-for k, v in configs.items():
-    spark.conf.set(
-        f"{k}.{STORAGE_ACCOUNT}.dfs.core.windows.net", v
-    )
+spark.conf.set(
+    f"fs.azure.account.auth.type.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    "OAuth"
+)
+spark.conf.set(
+    f"fs.azure.account.oauth.provider.type.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    "org.apache.hadoop.fs.azurebfs.oauth2.ClientCredsTokenProvider"
+)
+spark.conf.set(
+    f"fs.azure.account.oauth2.client.id.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    CLIENT_ID
+)
+spark.conf.set(
+    f"fs.azure.account.oauth2.client.secret.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    CLIENT_SECRET
+)
+spark.conf.set(
+    f"fs.azure.account.oauth2.client.endpoint.{STORAGE_ACCOUNT}.dfs.core.windows.net",
+    f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/token"
+)
 
 # ------------------------------------------------------------
 # PATHS
@@ -57,7 +59,7 @@ INCOMING_BASE = f"abfss://incoming@{STORAGE_ACCOUNT}.dfs.core.windows.net"
 PROCESSED_BASE = f"abfss://processed@{STORAGE_ACCOUNT}.dfs.core.windows.net"
 
 REGISTRATIONS_PATH = (
-    f"{INCOMING_BASE}/registrations/run_date={RUN_DATE}/"
+    f"{INCOMING_BASE}/registrations/run={RUN_DATE}/"
 )
 
 FACT_PATH = (
@@ -65,7 +67,7 @@ FACT_PATH = (
 )
 
 # ------------------------------------------------------------
-# EXPLICIT SCHEMA (MATCHES CSV)
+# EXPLICIT SCHEMA (AS STRING FIRST)
 # ------------------------------------------------------------
 
 daily_schema = StructType([
@@ -91,42 +93,44 @@ raw_df = (
 )
 
 # ------------------------------------------------------------
-# PARSE TIMESTAMPS (CORRECT FORMAT)
+# SAFE TIMESTAMP PARSING (MULTI FORMAT)
 # ------------------------------------------------------------
+
+def parse_ts(col):
+    return F.coalesce(
+        F.to_timestamp(col, "yyyy-MM-dd HH:mm:ss"),
+        F.to_timestamp(col, "dd-MM-yy HH:mm"),
+        F.to_timestamp(col, "dd-MM-yyyy HH:mm:ss")
+    )
 
 parsed_df = (
     raw_df
-    .withColumn(
-        "modified_at",
-        F.to_timestamp("modified_at", "yyyy-MM-dd HH:mm:ss")
-    )
-    .withColumn(
-        "reg_dt",
-        F.to_timestamp("reg_dt", "yyyy-MM-dd HH:mm:ss")
-    )
-    .withColumn(
-        "created_at",
-        F.to_timestamp("created_at", "yyyy-MM-dd HH:mm:ss")
-    )
+    .withColumn("reg_dt", parse_ts("reg_dt"))
+    .withColumn("created_at", parse_ts("created_at"))
+    .withColumn("modified_at", parse_ts("modified_at"))
 )
 
-# Reject bad rows safely
-bad_rows = parsed_df.filter(F.col("modified_at").isNull()).count()
-print(f"Rejected rows due to bad timestamp: {bad_rows}")
+# ------------------------------------------------------------
+# REJECT BAD ROWS (DO NOT FAIL PIPELINE)
+# ------------------------------------------------------------
 
-parsed_df = parsed_df.filter(F.col("modified_at").isNotNull())
+rejected_count = parsed_df.filter(F.col("modified_at").isNull()).count()
+print(f"Rejected rows due to bad timestamp: {rejected_count}")
+
+clean_df = parsed_df.filter(F.col("modified_at").isNotNull())
 
 # ------------------------------------------------------------
 # DEDUPLICATION (LATEST PER REGISTRATION)
 # ------------------------------------------------------------
 
 window_spec = (
-    Window.partitionBy("registration_id")
-          .orderBy(F.col("modified_at").desc())
+    Window
+    .partitionBy("registration_id")
+    .orderBy(F.col("modified_at").desc())
 )
 
 dedup_df = (
-    parsed_df
+    clean_df
     .withColumn("rn", F.row_number().over(window_spec))
     .filter(F.col("rn") == 1)
     .drop("rn")
@@ -139,11 +143,12 @@ dedup_df = (
 enriched_df = (
     dedup_df
     .withColumn("load_type", F.lit("DAILY"))
+    .withColumn("run_date", F.lit(RUN_DATE))
     .withColumn("ingested_at", F.current_timestamp())
 )
 
 # ------------------------------------------------------------
-# MERGE INTO DELTA FACT TABLE (EXPLICIT & SAFE)
+# MERGE INTO FACT TABLE (CORRECT BUSINESS KEYS)
 # ------------------------------------------------------------
 
 target = DeltaTable.forPath(spark, FACT_PATH)
@@ -165,6 +170,7 @@ target = DeltaTable.forPath(spark, FACT_PATH)
         "created_at": "s.created_at",
         "modified_at": "s.modified_at",
         "load_type": "s.load_type",
+        "run_date": "s.run_date",
         "ingested_at": "s.ingested_at"
     })
     .whenNotMatchedInsert(values={
@@ -177,6 +183,7 @@ target = DeltaTable.forPath(spark, FACT_PATH)
         "created_at": "s.created_at",
         "modified_at": "s.modified_at",
         "load_type": "s.load_type",
+        "run_date": "s.run_date",
         "ingested_at": "s.ingested_at"
     })
     .execute()
@@ -194,8 +201,7 @@ spark.read.format("delta") \
 
 print(f"✅ Daily load completed successfully for {RUN_DATE}")
 
-
 spark.read.format("delta") \
-  .load("abfss://processed@stregistrationsde001.dfs.core.windows.net/reports/fact_registrations") \
-  .filter("registration_id = '1027'") \
-  .show(truncate=False)
+    .load(FACT_PATH) \
+    .filter("registration_id = '1027'") \
+    .show(truncate=False)
