@@ -7,6 +7,7 @@ from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 from pyspark.sql.types import *
 from delta.tables import DeltaTable
+from datetime import datetime
 
 # ------------------------------------------------------------
 # 0. SPARK SAFETY SETTINGS (CRITICAL)
@@ -20,7 +21,14 @@ spark.catalog.clearCache()
 # 1. PARAMETERS
 # ------------------------------------------------------------
 
-RUN_DATE = "2026-01-05"
+def get_run_date():
+    try:
+        return dbutils.widgets.get("run_date")
+    except:
+        return datetime.utcnow().strftime("%Y-%m-%d")
+
+RUN_DATE = get_run_date()
+
 STORAGE_ACCOUNT = "stregistrationsde001"
 
 INCOMING_BASE  = f"abfss://incoming@{STORAGE_ACCOUNT}.dfs.core.windows.net"
