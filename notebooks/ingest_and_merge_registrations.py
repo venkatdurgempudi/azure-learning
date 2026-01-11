@@ -178,9 +178,3 @@ spark.read.format("delta") \
 
 print(f"✅ Daily incremental load completed successfully for {RUN_DATE}")
 
-spark.read.format("delta") \
-  .load(FACT_PATH) \
-  .groupBy("run_date", "load_type") \
-  .count() \
-  .show()
-
