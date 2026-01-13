@@ -45,35 +45,41 @@ This project demonstrates **core Azure Data Engineering skills**:
 ## 3. Repository structure
 
 ```
-.
-├── LICENSE
-├── README.md
-├── adf/
-│   └── pipeline_registrations.json
-├── azure/
+├── adf
+│   ├── pipeline_registrations.json
+├── azure
 │   ├── create_resources.sh
-│   └── create_sp_and_role.sh
-├── data/
-│   ├── registrations.csv
-│   ├── gender_master.csv
-│   └── unit_master.csv
-├── notebooks/
-│   ├── 01_ingest_registrations_history.py
-│   └── 02_ingest_registrations_daily.py
-├── sql/
-│   ├── sample_ddl.sql
-│   └── usp_insert_run_record.sql
-├── tools/
-│   ├── gen-tree.sh
-│   └── generate_mock_registrations.py
-├── secrets/
-│   └── README.md
-├── learning/
+│   ├── create_sp_and_role.sh
+├── data
+│   ├── masters
+│   │   ├── gender_master.csv
+│   │   ├── unit_master.csv
+│   ├── registrations
+│   │   ├── run_date=2026-01-05
+│   │   │   ├── registrations.csv
+│   │   ├── run_date=2026-01-11
+│   │   │   ├── registrations.csv
+│   │   ├── run=manual_001
+│   │   │   ├── registrations.csv
+├── learning
 │   ├── README.md
-│   └── resources.md
+│   ├── resources.md
+├── LICENSE
+├── notebooks
+│   ├── 00_adls_oauth_setup.py
+│   ├── 01_ingest_registrations_history.py
+│   ├── ingest_and_merge_registrations.py
+├── README.md
+├── secrets
+│   ├── README.md
+├── sql
+│   ├── sample_ddl.sql
+│   ├── usp_insert_run_record.sql
+├── tools
+│   ├── generate_mock_registrations.py
+│   ├── gen-tree.sh
+│   ├── sync_to_incoming.ps1
 ```
-
----
 
 ## 4. Prerequisites
 
