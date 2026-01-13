@@ -8,6 +8,7 @@ from pyspark.sql.window import Window
 from pyspark.sql.types import *
 from delta.tables import DeltaTable
 from datetime import datetime
+from pyspark.sql.functions import lit
 
 # ------------------------------------------------------------
 # 0. SPARK SAFETY SETTINGS (CRITICAL)
