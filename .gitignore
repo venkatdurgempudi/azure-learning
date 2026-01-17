@@ -43,3 +43,31 @@ Thumbs.db
 # =========================
 *.log
 tmp/
+
+# =========================
+# Data (DO NOT COMMIT DATA)
+# =========================
+data/
+*.csv
+*.tsv
+*.json
+*.parquet
+*.avro
+*.orc
+
+# Delta Lake
+_delta_log/
+*.delta
+
+# Partition-style folders
+run_date=*/
+dt=*/
+date=*/
+
+# ADLS / Spark outputs
+bronze/
+silver/
+gold/
+processed/
+incoming/
+
