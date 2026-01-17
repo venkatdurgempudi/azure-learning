@@ -14,14 +14,83 @@ It is designed to demonstrate:
 
 ## Repository Structure
 
-azure-learning/
-- projects/
-  - project-0-sandbox/         # Learning experiments and prototypes
-  - project-1-onprem-to-azure/ # End-to-end production-style project
-- learning/                    # Conceptual notes and references
-- infra/                       # Shared infrastructure scripts (future use)
-- shared/                      # Reusable utilities and templates (future use)
-- README.md                    # This file
+```text
+├── gen-tree.sh
+├── infra
+│   ├── .gitkeep
+├── learning
+│   ├── README.md
+│   ├── resources.md
+├── LICENSE
+├── projects
+│   ├── project-0-sandbox
+│   │   ├── adf
+│   │   │   ├── pipeline_registrations.json
+│   │   ├── data
+│   │   │   ├── masters
+│   │   │   │   ├── gender_master.csv
+│   │   │   │   ├── unit_master.csv
+│   │   │   ├── registrations
+│   │   │   │   ├── run_date=2026-01-05
+│   │   │   │   │   ├── registrations.csv
+│   │   │   │   ├── run_date=2026-01-11
+│   │   │   │   │   ├── registrations.csv
+│   │   │   │   ├── run=manual_001
+│   │   │   │   │   ├── registrations.csv
+│   │   ├── databricks
+│   │   │   ├── notebooks
+│   │   │   │   ├── 00_adls_oauth_setup.py
+│   │   │   │   ├── 01_ingest_registrations_history.py
+│   │   │   │   ├── gold-silver-schema-creation.ipynb
+│   │   │   │   ├── ingest_and_merge_registrations.py
+│   │   ├── infra
+│   │   │   ├── azure-cli
+│   │   │   │   ├── create_resources.sh
+│   │   │   │   ├── create_sp_and_role.sh
+│   │   ├── notes
+│   │   │   ├── .gitkeep
+│   │   ├── README.md
+│   │   ├── secrets
+│   │   │   ├── README.md
+│   │   ├── sql
+│   │   │   ├── sample_ddl.sql
+│   │   │   ├── usp_insert_run_record.sql
+│   │   ├── tools
+│   │   │   ├── generate_mock_registrations.py
+│   │   │   ├── sync_to_incoming.ps1
+│   ├── project-1-onprem-to-azure
+│   │   ├── adf
+│   │   │   ├── datasets
+│   │   │   │   ├── .gitkeep
+│   │   │   ├── linked-services
+│   │   │   │   ├── .gitkeep
+│   │   │   ├── pipelines
+│   │   │   │   ├── .gitkeep
+│   │   ├── architecture
+│   │   │   ├── .gitkeep
+│   │   ├── databricks
+│   │   │   ├── bronze
+│   │   │   │   ├── .gitkeep
+│   │   │   ├── gold
+│   │   │   │   ├── .gitkeep
+│   │   │   ├── silver
+│   │   │   │   ├── .gitkeep
+│   │   ├── docs
+│   │   │   ├── .gitkeep
+│   │   ├── infra
+│   │   │   ├── .gitkeep
+│   │   ├── powerbi
+│   │   │   ├── .gitkeep
+│   │   ├── README.md
+│   │   ├── synapse
+│   │   │   ├── serverless-sql
+│   │   │   │   ├── .gitkeep
+│   │   ├── tools
+│   │   │   ├── .gitkeep
+├── README.md
+├── shared
+│   ├── .gitkeep
+```
 
 ---
 
