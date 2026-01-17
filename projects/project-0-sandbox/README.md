@@ -35,6 +35,7 @@ This project includes experiments related to:
 
 ## Folder Structure Explained
 
+```text
 ├── adf
 │   ├── pipeline_registrations.json
 ├── data
@@ -69,8 +70,7 @@ This project includes experiments related to:
 ├── tools
 │   ├── generate_mock_registrations.py
 │   ├── sync_to_incoming.ps1
-
----
+```
 
 ## Data Handling Policy
 
