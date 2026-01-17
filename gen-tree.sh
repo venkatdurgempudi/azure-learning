@@ -22,3 +22,6 @@ BEGIN { FS="/" }
   for (i = 1; i < depth; i++) indent = indent "│   "
   print indent "├── " $NF
 }'
+
+#./gen-tree.sh ../azure-learning/projects/project-1-onprem-to-azure/
+#./gen-tree.sh ../azure-learning/projects/project-0-sandbox/
